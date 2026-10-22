@@ -4,3 +4,6 @@ torchvision
 Pillow
 transformers
 numpy
+einops
+kornia
+timm
