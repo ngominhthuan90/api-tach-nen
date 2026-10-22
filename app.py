@@ -1,63 +1,17 @@
 import streamlit as st
-import torch
-from torchvision import transforms
+from rembg import remove
 from PIL import Image, ImageEnhance
-import numpy as np
-from transformers import AutoModelForImageSegmentation
 import io
-import gc
 
-st.set_page_config(page_title="BiRefNet Signature & Background Remover", layout="wide")
+st.set_page_config(page_title="Tách Nền & Tối Ưu Chữ Ký", layout="wide")
 st.title("🖼️ Ứng dụng Bắp Tách Nền & Tối Ưu Ảnh")
-
-# Khởi tạo mô hình (cache để không tải lại nhiều lần)
-@st.cache_resource
-def load_model():
-    model = AutoModelForImageSegmentation.from_pretrained(
-        'ZhengPeng7/BiRefNet',
-        trust_remote_code=True
-    )
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model.to(device)
-    model.eval()
-    return model, device
-
-try:
-    model, device = load_model()
-    st.success("Đã tải mô hình AI tách nền thành công!")
-except Exception as e:
-    st.error(f"Lỗi khi tải mô hình: {e}")
-
-# Hàm xử lý tách nền
-def remove_background(image, model, device):
-    orig_w, orig_h = image.size
-    transform_image = transforms.Compose([
-        transforms.Resize((256, 256)), # Đã giảm xuống 256 để chống tràn RAM
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    input_tensor = transform_image(image.convert("RGB")).unsqueeze(0).to(device)
-
-    gc.collect()
-
-    with torch.no_grad():
-        preds = model(input_tensor)[-1].sigmoid().cpu()
-
-    pred = preds[0].squeeze()
-    mask_pil = transforms.ToPILImage()(pred).resize((orig_w, orig_h), Image.Resampling.BILINEAR)
-
-    output_image = image.convert("RGB").copy()
-    output_image.putalpha(mask_pil)
-    
-    del input_tensor, preds, pred
-    gc.collect()
-    
-    return output_image, mask_pil
 
 # Hàm tối ưu hóa chữ ký
 def enhance_signature(transparent_image, contrast_factor, sharpness_factor):
+    # Đảm bảo ảnh có kênh alpha (trong suốt)
     if transparent_image.mode != 'RGBA':
-        return transparent_image
+        transparent_image = transparent_image.convert('RGBA')
+    
     r, g, b, a = transparent_image.split()
     rgb_img = Image.merge('RGB', (r, g, b))
     
@@ -81,18 +35,20 @@ if uploaded_file is not None:
         st.image(input_image, caption="Ảnh gốc của bác sĩ", use_container_width=True)
         
     with col2:
-        with st.spinner("Đang tách nền bằng AI..."):
+        with st.spinner("Đang tách nền bằng AI (siêu tốc)..."):
             try:
-                output_image, mask_pil = remove_background(input_image, model, device)
+                # Tách nền bằng rembg (nhẹ và không lo hết RAM)
+                output_image = remove(input_image)
                 
                 st.markdown("### 🛠️ Bộ lọc tối ưu chữ ký")
                 contrast = st.slider("Độ tương phản (làm rõ nét mực)", 1.0, 5.0, 2.5, 0.5)
                 sharpness = st.slider("Độ sắc nét", 1.0, 4.0, 2.0, 0.5)
                 scale = st.slider("Kích thước ảnh đầu ra (%) - Giảm để nhẹ file", 10, 100, 100, 10)
                 
+                # Áp dụng bộ lọc
                 final_signature = enhance_signature(output_image, contrast, sharpness)
                 
-                # Thu nhỏ ảnh nếu người dùng giảm thanh trượt kích thước
+                # Thu nhỏ nếu cần giảm dung lượng
                 if scale < 100:
                     new_width = int(final_signature.width * scale / 100)
                     new_height = int(final_signature.height * scale / 100)
@@ -100,6 +56,7 @@ if uploaded_file is not None:
                 
                 st.image(final_signature, caption="Chữ ký đã tách nền & tối ưu sắc nét", use_container_width=True)
                 
+                # Nút tải file
                 buf = io.BytesIO()
                 final_signature.save(buf, format="PNG")
                 st.download_button(
@@ -109,4 +66,4 @@ if uploaded_file is not None:
                     mime="image/png"
                 )
             except Exception as e:
-                st.error("Máy chủ miễn phí bị quá tải RAM. Vui lòng thử lại với một bức ảnh có dung lượng nhỏ hơn.")
+                st.error(f"Có lỗi xảy ra: {e}")
