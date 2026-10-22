@@ -32,13 +32,12 @@ except Exception as e:
 def remove_background(image, model, device):
     orig_w, orig_h = image.size
     transform_image = transforms.Compose([
-        transforms.Resize((128, 128)),
+        transforms.Resize((256, 256)), # Đã giảm xuống 256 để chống tràn RAM
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     input_tensor = transform_image(image.convert("RGB")).unsqueeze(0).to(device)
 
-    # Dọn dẹp RAM trước khi AI tính toán
     gc.collect()
 
     with torch.no_grad():
@@ -50,7 +49,6 @@ def remove_background(image, model, device):
     output_image = image.convert("RGB").copy()
     output_image.putalpha(mask_pil)
     
-    # Giải phóng bộ nhớ ngay sau khi xử lý xong
     del input_tensor, preds, pred
     gc.collect()
     
@@ -87,18 +85,21 @@ if uploaded_file is not None:
             try:
                 output_image, mask_pil = remove_background(input_image, model, device)
                 
-                # Thanh điều chỉnh chất lượng chữ ký
                 st.markdown("### 🛠️ Bộ lọc tối ưu chữ ký")
                 contrast = st.slider("Độ tương phản (làm rõ nét mực)", 1.0, 5.0, 2.5, 0.5)
                 sharpness = st.slider("Độ sắc nét", 1.0, 4.0, 2.0, 0.5)
+                scale = st.slider("Kích thước ảnh đầu ra (%) - Giảm để nhẹ file", 10, 100, 100, 10)
                 
-                # Áp dụng bộ lọc tối ưu chữ ký
                 final_signature = enhance_signature(output_image, contrast, sharpness)
                 
-                # Hiển thị kết quả tối ưu
+                # Thu nhỏ ảnh nếu người dùng giảm thanh trượt kích thước
+                if scale < 100:
+                    new_width = int(final_signature.width * scale / 100)
+                    new_height = int(final_signature.height * scale / 100)
+                    final_signature = final_signature.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
                 st.image(final_signature, caption="Chữ ký đã tách nền & tối ưu sắc nét", use_container_width=True)
                 
-                # Nút tải file PNG về máy
                 buf = io.BytesIO()
                 final_signature.save(buf, format="PNG")
                 st.download_button(
